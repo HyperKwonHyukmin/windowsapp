@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DeskKeeper</AssemblyName>
+    <RootNamespace>DeskKeeper.Tray</RootNamespace>
+
+    <!-- 상주 메모리 최소화: 서버 GC·동시 GC 끄기, ICU 로드 안 함 -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- 아이콘 원본은 tools/make-icon.ps1 로 만든다 -->
+    <ApplicationIcon>DeskKeeper.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="DeskKeeper.ico" LogicalName="DeskKeeper.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DeskKeeper.Core\DeskKeeper.Core.csproj" />
+  </ItemGroup>
+
+</Project>
