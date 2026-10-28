@@ -6,7 +6,8 @@ namespace DeskKeeper.Tray;
 /// <summary>창 없이 트레이 아이콘만 띄우는 상주 컨텍스트.</summary>
 sealed class TrayContext : ApplicationContext
 {
-    private const string HotkeyText = "Ctrl+Alt+Space";
+    // Alt+Space: Windows 창 메뉴(최소화·이동)를 대신한다. PowerToys Run 은 꺼져 있고 명령 팔레트는 Win+Alt+Space
+    private const string HotkeyText = "Alt+Space";
 
     private readonly SettingsStore _store = new();
     private readonly NotifyIcon _icon;
@@ -30,6 +31,8 @@ sealed class TrayContext : ApplicationContext
     /// <summary>90% 를 넘어 알린 상태. 85% 아래로 내려와야 다시 알린다(오르내릴 때 반복 알림 방지).</summary>
     private bool _memoryHigh;
     private Font? _boldMenuFont;
+    private readonly Control _invoker = new();
+    private readonly SnippetExpander _snippets;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool DestroyIcon(IntPtr handle);
@@ -58,7 +61,7 @@ sealed class TrayContext : ApplicationContext
                 ToggleLauncher();
         };
 
-        _hotkey = new HotkeyWindow(HotkeyWindow.ModControl | HotkeyWindow.ModAlt, Keys.Space);
+        _hotkey = new HotkeyWindow(HotkeyWindow.ModAlt, Keys.Space);
         _hotkey.Pressed += ToggleLauncher;
         if (!_hotkey.IsRegistered)
         {
@@ -98,6 +101,11 @@ sealed class TrayContext : ApplicationContext
 
         _store.ReloadIfChanged();
         ReportLoadError();
+        // 문구 입력기: 훅 콜백 뒤에 문구를 보낼 UI 루프용 보이지 않는 컨트롤
+        _invoker.CreateControl();
+        _snippets = new SnippetExpander(_store, _invoker);
+        if (_store.Current.SnippetsEnabled && !_snippets.Start())
+            _icon.ShowBalloonTip(6000, "DeskKeeper", "문구 입력기를 켜지 못했습니다(키보드 훅이 막혔을 수 있습니다).", ToolTipIcon.Warning);
         // 시작 직후 초기화로 커진 작업 메모리를 정리
         ScheduleTrim();
     }
@@ -273,6 +281,12 @@ sealed class TrayContext : ApplicationContext
         _menu.Items.Add("폴더 분석…", null, (_, _) => ItemLauncher.StartAnalyzer(null));
         var memoryLabel = _memoryPercent >= 0 ? $"메모리 보기 ({_memoryPercent}%) — SessionBoard 4번 탭" : "메모리 보기 — SessionBoard 4번 탭";
         _menu.Items.Add(memoryLabel, null, (_, _) => OpenSessionBoard());
+        _menu.Items.Add(new ToolStripMenuItem("문구 입력 (@단어)", null, (_, _) => ToggleSnippets()) { Checked = _snippets.IsRunning });
+        _menu.Items.Add("문구 편집", null, (_, _) =>
+        {
+            try { _store.EnsureSnippetsWritten(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            OpenSettingsFile();
+        });
         _menu.Items.Add("설정 파일 열기", null, (_, _) => OpenSettingsFile());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Windows 시작 시 실행", null, OnToggleAutoStart) { Checked = AutoStart.IsEnabled() });
@@ -323,6 +337,20 @@ sealed class TrayContext : ApplicationContext
         _trimTimer.Start();
     }
 
+    private void ToggleSnippets()
+    {
+        bool enable = !_snippets.IsRunning;
+        if (enable && !_snippets.Start())
+        {
+            MessageBox.Show("문구 입력기를 켜지 못했습니다. 보안 프로그램이 키보드 훅을 막았을 수 있습니다.", "DeskKeeper",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (!enable)
+            _snippets.Stop();
+        try { _store.SetSnippetsEnabled(enable); } catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException) { }
+    }
+
     private void OnToggleAutoStart(object? sender, EventArgs e)
     {
         AutoStart.Set(!AutoStart.IsEnabled());
@@ -332,6 +360,8 @@ sealed class TrayContext : ApplicationContext
     {
         _launcher?.Close();
         _hotkey.Dispose();
+        _snippets.Dispose();
+        _invoker.Dispose();
         _icon.Visible = false;
         _icon.Dispose();
         _menu.Dispose();

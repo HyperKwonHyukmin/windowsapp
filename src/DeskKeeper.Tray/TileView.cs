@@ -9,8 +9,11 @@ namespace DeskKeeper.Tray;
 /// </summary>
 sealed class TileView : Control
 {
-    /// <summary>분류 구역 하나. Group 이 null 이면 "분류 없음". ShowHeader 가 false 면 제목 없이 타일만.</summary>
-    public sealed record Section(string? Group, string Title, Color Hue, IReadOnlyList<LauncherItem> Items, bool ShowHeader);
+    /// <summary>
+    /// 분류 구역 하나. Group 이 null 이면 "분류 없음". ShowHeader 가 false 면 제목 없이 타일만.
+    /// Compact 면 큰 타일 대신 한 줄짜리 목록 칸(작은 아이콘 + 이름)을 여러 열로 채운다(최근 파일).
+    /// </summary>
+    public sealed record Section(string? Group, string Title, Color Hue, IReadOnlyList<LauncherItem> Items, bool ShowHeader, bool Compact = false);
 
     private sealed record TileBox(LauncherItem Item, Section Section, Rectangle Bounds);
     /// <summary>Bounds 는 제목 줄, Block 은 제목과 타일을 합친 구역 전체(끌어다 놓기 판정용).</summary>
@@ -63,6 +66,10 @@ sealed class TileView : Control
     private int Gap => LogicalToDeviceUnits(10);
     private int HeaderHeight => LogicalToDeviceUnits(34);
     private int Inset => LogicalToDeviceUnits(4);
+    private int CompactWidth => LogicalToDeviceUnits(240);
+    private int CompactHeight => LogicalToDeviceUnits(30);
+    private int CompactGapX => LogicalToDeviceUnits(8);
+    private int CompactGapY => LogicalToDeviceUnits(2);
 
     public void SetSections(List<Section> sections)
     {
@@ -103,6 +110,33 @@ sealed class TileView : Control
         int x = Inset, bandTop = 0, bandHeight = 0;
         foreach (var section in _sections)
         {
+            if (section.Compact)
+            {
+                // 목록 칸 구역: 늘 새 띠에서 전체 너비로, 칸을 왼쪽부터 여러 열로 채운다
+                if (x > Inset)
+                {
+                    bandTop += bandHeight + Gap;
+                    x = Inset;
+                }
+                int head = section.ShowHeader ? HeaderHeight : 0;
+                int columns = Math.Max(1, (usable + CompactGapX) / (CompactWidth + CompactGapX));
+                int cellWidth = (usable - (columns - 1) * CompactGapX) / columns;
+                int lines = (section.Items.Count + columns - 1) / columns;
+                int height = head + lines * (CompactHeight + CompactGapY) - CompactGapY;
+                var area = new Rectangle(Inset, bandTop, usable, height);
+                if (section.ShowHeader)
+                    headers.Add(new HeaderBox(section, new Rectangle(Inset, bandTop, usable, HeaderHeight), area));
+                for (int i = 0; i < section.Items.Count; i++)
+                {
+                    var rect = new Rectangle(Inset + (i % columns) * (cellWidth + CompactGapX),
+                        bandTop + head + (i / columns) * (CompactHeight + CompactGapY), cellWidth, CompactHeight);
+                    tiles.Add(new TileBox(section.Items[i], section, rect));
+                }
+                bandTop += height + Gap;
+                bandHeight = 0;
+                continue;
+            }
+
             int cols = Math.Min(section.Items.Count, perRow);
             int rows = (section.Items.Count + perRow - 1) / perRow;
             int blockWidth = Math.Max(TileWidth, cols * (TileWidth + Gap) - Gap);
@@ -130,7 +164,10 @@ sealed class TileView : Control
             bandHeight = Math.Max(bandHeight, blockHeight);
             x += blockWidth + blockGap;
         }
-        return _sections.Count == 0 ? 0 : bandTop + bandHeight + Inset;
+        if (_sections.Count == 0)
+            return 0;
+        // 마지막이 목록 칸 구역이면 bandTop 이 이미 그 아래(+Gap)를 가리킨다
+        return bandHeight > 0 ? bandTop + bandHeight + Inset : bandTop - Gap + Inset;
     }
 
     // ── 선택·이동 ──────────────────────────────────────────
@@ -332,6 +369,11 @@ sealed class TileView : Control
 
     private void DrawTile(Graphics g, TileBox t, bool selected, bool hover)
     {
+        if (t.Section.Compact)
+        {
+            DrawCompact(g, t, selected, hover);
+            return;
+        }
         var hue = TileHue?.Invoke(t.Item) ?? t.Section.Hue;
         // 바탕은 분류 색을 흰색에 옅게 섞는다. 마우스를 올리면 조금, 선택하면 더 진하게
         var fill = Blend(hue, selected ? 0.24 : hover ? 0.17 : 0.11);
@@ -361,6 +403,35 @@ sealed class TileView : Control
         TextRenderer.DrawText(g, t.Item.Name, _nameFont, nameRect, Ink,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis |
             TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.TextBoxControl);
+    }
+
+    /// <summary>목록 칸: 평소엔 바탕 없이 작은 아이콘 + 이름 한 줄, 마우스·선택 때만 옅은 바탕.</summary>
+    private void DrawCompact(Graphics g, TileBox t, bool selected, bool hover)
+    {
+        var b = t.Bounds;
+        var hue = TileHue?.Invoke(t.Item) ?? t.Section.Hue;
+        if (selected || hover)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var path = Rounded(new RectangleF(b.X, b.Y, b.Width - 1, b.Height - 1), LogicalToDeviceUnits(6));
+            using var brush = new SolidBrush(Blend(hue, selected ? 0.20 : 0.10));
+            g.FillPath(brush, path);
+            if (selected)
+            {
+                using var pen = new Pen(hue, LogicalToDeviceUnits(1));
+                g.DrawPath(pen, path);
+            }
+            g.SmoothingMode = SmoothingMode.None;
+        }
+
+        int icon = SystemInformation.SmallIconSize.Width;
+        int pad = LogicalToDeviceUnits(8);
+        if (_icons.Get(t.Item.Path) is { } small)
+            g.DrawIcon(small, new Rectangle(b.X + pad, b.Y + (b.Height - icon) / 2, icon, icon));
+        int textLeft = b.X + pad + icon + LogicalToDeviceUnits(8);
+        TextRenderer.DrawText(g, t.Item.Name, _nameFont, new Rectangle(textLeft, b.Y, b.Right - textLeft - pad, b.Height), Ink,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis |
+            TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
     }
 
     /// <summary>내용이 넘칠 때만 오른쪽에 얇은 스크롤 위치 표시.</summary>

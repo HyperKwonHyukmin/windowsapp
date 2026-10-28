@@ -28,6 +28,10 @@ sealed class LauncherForm : Form
         Color.FromArgb(202, 138, 4),    // 겨자
     ];
     private static readonly Color UngroupedHue = Color.FromArgb(100, 116, 139);
+    // 최근 파일은 등록한 것과 구분되게 차분한 청회색
+    private static readonly Color RecentHue = Color.FromArgb(71, 85, 105);
+    private const int RecentCount = 12;
+    private const string RecentTitle = "최근 파일";
 
     private static readonly Color Surface = Color.FromArgb(249, 249, 249);
     private static readonly Color Field = Color.White;
@@ -59,6 +63,9 @@ sealed class LauncherForm : Form
     private bool _modalOpen;
     /// <summary>검색 중(분류 구역 없이 맞는 순서)인지.</summary>
     private bool _searching;
+    /// <summary>Windows 최근 항목(창을 열 때 한 번 읽는다). 등록하지 않은 임시 항목이라 메뉴가 다르다.</summary>
+    private List<LauncherItem>? _recentAll;
+    private readonly HashSet<LauncherItem> _recent = new(ReferenceEqualityComparer.Instance);
     /// <summary>아래 안내 줄 왼쪽 문구(상태·안내). 오른쪽에는 가리킨 타일의 경로를 그린다.</summary>
     private string _footerText = "";
     private string _countText = "";
@@ -184,16 +191,24 @@ sealed class LauncherForm : Form
 
         var built = LauncherSection.Build(_store.Current);
         bool useGroups = LauncherSection.HasGroups(built);
+        // 최근 파일: 창을 열 때 한 번 읽고, 그사이 등록한 것은 뺀다
+        _recentAll ??= RecentFiles.Read(RecentCount * 2, all.Select(i => i.Path));
+        var registered = new HashSet<string>(all.Select(i => i.Path.TrimEnd('\\')), StringComparer.OrdinalIgnoreCase);
+        var recent = _recentAll.Where(r => !registered.Contains(r.Path)).Take(RecentCount).ToList();
+        _recent.Clear();
+        _recent.UnionWith(recent);
         // 타일 색은 늘 그 항목의 분류 색(분류를 안 쓰면 모두 기본 강조색). 검색 중에도 어느 분류인지 보인다
-        _tiles.TileHue = item => useGroups ? HueOf(item.Group) : Accent;
+        _tiles.TileHue = item => _recent.Contains(item) ? RecentHue : useGroups ? HueOf(item.Group) : Accent;
 
         var sections = new List<TileView.Section>();
         if (_searching)
         {
-            // 검색 중: 분류 구역 없이 맞는 순서(이름이 검색어로 시작하는 항목 먼저, 그다음 등록 순서)
-            var hits = all.Where(i => i.Name.Contains(q, StringComparison.OrdinalIgnoreCase))
-                          .OrderBy(i => i.Name.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                          .ToList();
+            // 검색 중: 분류 구역 없이 맞는 순서(이름이 검색어로 시작하는 항목 먼저, 그다음 등록 순서).
+            // 최근 파일도 함께 찾되 등록한 항목 뒤에 둔다
+            static int Rank(LauncherItem i, string q) => i.Name.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+            var hits = all.Where(i => i.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).OrderBy(i => Rank(i, q))
+                .Concat(recent.Where(i => i.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).OrderBy(i => Rank(i, q)))
+                .ToList();
             if (hits.Count > 0)
                 sections.Add(new TileView.Section(null, "", Accent, hits, false));
         }
@@ -201,10 +216,12 @@ sealed class LauncherForm : Form
         {
             foreach (var s in built)
                 sections.Add(new TileView.Section(s.Group, s.Title, useGroups ? HueOf(s.Group) : Accent, s.Items, useGroups));
+            if (recent.Count > 0)
+                sections.Add(new TileView.Section(null, RecentTitle, RecentHue, recent, true, Compact: true));
         }
         _tiles.SetSections(sections);
 
-        int matches = sections.Sum(s => s.Items.Count);
+        int matches = sections.Sum(s => s.Items.Count(i => !_recent.Contains(i)));
         _countText = _searching ? $"{matches}/{all.Count}" : all.Count > 0 ? $"{all.Count}개" : "";
         _footerText = _store.LoadError is not null
             ? "settings.json 에 오류가 있습니다. 트레이 메뉴의 '설정 파일 열기'로 고쳐 주세요."
@@ -461,11 +478,20 @@ sealed class LauncherForm : Form
                 ItemLauncher.StartAnalyzer(item.Path);
             }
         });
-        menu.Items.Add(new ToolStripSeparator());
+        var groupSeparator = new ToolStripSeparator();
+        menu.Items.Add(groupSeparator);
         var groupMenu = new ToolStripMenuItem("분류");
         menu.Items.Add(groupMenu);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("목록에서 제거 (파일은 그대로)", null, (_, _) =>
+        var pin = new ToolStripMenuItem("런처에 등록", null, (_, _) =>
+        {
+            // 최근 파일 → 등록 항목(분류 없음). 그다음부터는 최근 구역에서 빠지고 위 구역에 보인다
+            if (_tiles.SelectedItem is { } item)
+                RunStoreAction(() => _store.AddLauncherItems([item.Path]));
+        });
+        menu.Items.Add(pin);
+        var removeSeparator = new ToolStripSeparator();
+        menu.Items.Add(removeSeparator);
+        var remove = menu.Items.Add("목록에서 제거 (파일은 그대로)", null, (_, _) =>
         {
             if (_tiles.SelectedItem is { } item)
                 RunStoreAction(() => _store.RemoveLauncherItem(item.Path));
@@ -477,9 +503,16 @@ sealed class LauncherForm : Form
                 e.Cancel = true;
                 return;
             }
+            bool isRecent = _recent.Contains(item);
             // 폴더 항목에서만 분석 메뉴를 보인다
             analyze.Visible = Directory.Exists(item.Path);
-            FillGroupChoices(groupMenu, item);
+            // 최근 파일은 아직 등록 전이라 분류·제거 대신 "런처에 등록"
+            groupMenu.Visible = !isRecent;
+            removeSeparator.Visible = !isRecent;
+            remove.Visible = !isRecent;
+            pin.Visible = isRecent;
+            if (!isRecent)
+                FillGroupChoices(groupMenu, item);
         };
         return menu;
     }

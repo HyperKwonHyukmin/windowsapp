@@ -19,6 +19,12 @@ public sealed class AppSettings
 
     /// <summary>파일별 날짜 표시. 날짜가 지나면 정리 후보, 아직이면 제외(보류).</summary>
     public List<FileMark> Marks { get; set; } = [];
+
+    /// <summary>문구 입력기(@단어 → 문구) 사용 여부. 키보드 훅이 필요해 기본은 끈다.</summary>
+    public bool SnippetsEnabled { get; set; }
+
+    /// <summary>문구: 키는 @ 뒤에 칠 영문·숫자 단어, 값은 바꿔 넣을 내용({date}·{time}·줄바꿈 가능).</summary>
+    public Dictionary<string, string> Snippets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class WatchedFolder

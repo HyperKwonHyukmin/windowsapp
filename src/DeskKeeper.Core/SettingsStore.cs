@@ -96,6 +96,25 @@ public sealed class SettingsStore
         Save();
     }
 
+    public void SetSnippetsEnabled(bool enabled)
+    {
+        ReloadIfChanged();
+        Current.SnippetsEnabled = enabled;
+        Save();
+    }
+
+    /// <summary>문구 편집 전에 호출. 문구가 하나도 없으면 고쳐 쓸 수 있는 예시를 넣는다.</summary>
+    public void EnsureSnippetsWritten()
+    {
+        ReloadIfChanged();
+        if (LoadError is not null || Current.Snippets.Count > 0)
+            return;
+        Current.Snippets["today"] = "{date}";
+        Current.Snippets["now"] = "{date} {time}";
+        Current.Snippets["sign"] = "감사합니다.\n(이름) 드림";
+        Save();
+    }
+
     /// <summary>파일들에 날짜를 붙인다(임시 표시·보류). 같은 경로의 기존 표시는 바꾼다.</summary>
     public void SetMarks(IEnumerable<string> paths, DateTime until)
     {
@@ -236,6 +255,15 @@ public sealed class SettingsStore
             settings.MarkDays = 30;
         // 손으로 고치다 빠진 값 보정: 경로 없는 항목은 버리고, 이름이 없으면 파일 이름을 쓴다
         settings.Launcher.RemoveAll(i => i is null || string.IsNullOrWhiteSpace(i.Path));
+        // 문구 키는 영문·숫자만 쓴다(대소문자 구분 없음). 손으로 잘못 쓴 키는 버린다
+        var snippets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in settings.Snippets ?? [])
+        {
+            var k = key?.Trim().TrimStart('@') ?? "";
+            if (k.Length > 0 && k.All(char.IsAsciiLetterOrDigit) && value is not null)
+                snippets[k] = value;
+        }
+        settings.Snippets = snippets;
         settings.LauncherGroups ??= [];
         settings.LauncherGroups.RemoveAll(string.IsNullOrWhiteSpace);
         foreach (var item in settings.Launcher)
