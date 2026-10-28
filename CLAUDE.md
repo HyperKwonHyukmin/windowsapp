@@ -14,6 +14,7 @@
 - `src/DeskKeeper.Tray` → `DeskKeeper.exe`: 트레이, 단축키, 런처, 하루 한 번 점검, `--mark` 명령(보내기 메뉴)
 - `src/DeskKeeper.Analyzer` → `DeskKeeper.Analyzer.exe [폴더|파일] | --expired`
 - 런처 분류의 묶는 순서는 `Core/LauncherSections.cs` 한 곳에서 정한다(런처와 트레이 메뉴가 같이 쓴다).
+- 문구 입력기(`SnippetExpander`) 훅 콜백 안에서는 `SendInput`을 부르지 않는다. `BeginInvoke`로 UI 루프에 넘긴다. 콜백이 오래 걸리면 Windows 가 훅을 뗀다. 우리가 넣은 키(`LLKHF_INJECTED`)는 무시하므로 **keybd_event 로는 자동 시험이 안 된다**. 사람이 직접 쳐서 확인한다.
 - 런처에서 대화상자를 띄울 때는 `_modalOpen`을 켠다(`AskName`). 켜지 않으면 비활성 처리로 런처가 닫힌다.
 - 두 프로그램은 settings.json 으로만 주고받는다. 상주 프로그램은 분석 창 종료(`Process.Exited`)만 받아 다시 점검한다.
 
