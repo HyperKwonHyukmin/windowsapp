@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 필요할 때만 실행하고 닫으면 끝나는 프로그램이라 메모리 설정은 기본값 -->
+    <ApplicationIcon>..\DeskKeeper.Tray\DeskKeeper.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DeskKeeper.Core\DeskKeeper.Core.csproj" />
+  </ItemGroup>
+
+</Project>

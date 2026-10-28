@@ -28,6 +28,40 @@ static class ItemLauncher
         }
     }
 
+    /// <summary>분석 창이 닫혔을 때(파일을 지웠을 수 있으니 정리 후보를 다시 센다). 스레드 풀에서 불린다.</summary>
+    public static event Action? AnalyzerExited;
+
+    /// <summary>
+    /// 분석 프로그램을 따로 실행한다(기다리지 않고 종료 알림만 받는다).
+    /// folder 가 없으면 폴더 선택 창부터, expired 면 정리 후보만 모아 연다.
+    /// </summary>
+    public static void StartAnalyzer(string? folder, bool expired = false)
+    {
+        var exe = Path.Combine(AppContext.BaseDirectory, "DeskKeeper.Analyzer.exe");
+        try
+        {
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+            if (expired)
+                psi.ArgumentList.Add("--expired");
+            else if (folder is not null)
+                psi.ArgumentList.Add(folder);
+            var process = Process.Start(psi);
+            if (process is null)
+                return;
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) =>
+            {
+                process.Dispose();
+                AnalyzerExited?.Invoke();
+            };
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show($"분석 프로그램을 실행하지 못했습니다.\n{exe}\n\n{ex.Message}",
+                "DeskKeeper", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     public static void RevealInExplorer(string path)
     {
         var args = File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"";
