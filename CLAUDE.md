@@ -13,13 +13,20 @@
 - `src/DeskKeeper.Core`: `SettingsStore`(쓰기 전에 다시 읽고, 파일에 오류가 있으면 저장 거부), `FolderScanner`, `Categorizer`, `Expiry`(정리 후보 판단)
 - `src/DeskKeeper.Tray` → `DeskKeeper.exe`: 트레이, 단축키, 런처, 하루 한 번 점검, `--mark` 명령(보내기 메뉴)
 - `src/DeskKeeper.Analyzer` → `DeskKeeper.Analyzer.exe [폴더|파일] | --expired`
+- 런처 분류의 묶는 순서는 `Core/LauncherSections.cs` 한 곳에서 정한다(런처와 트레이 메뉴가 같이 쓴다).
+- 런처에서 대화상자를 띄울 때는 `_modalOpen`을 켠다(`AskName`). 켜지 않으면 비활성 처리로 런처가 닫힌다.
 - 두 프로그램은 settings.json 으로만 주고받는다. 상주 프로그램은 분석 창 종료(`Process.Exited`)만 받아 다시 점검한다.
 
 ## 주의
 - 상주 프로그램의 기한 점검은 파일 목록을 만들지 않고 개수만 센다(`Expiry.CountExpired`). 목록이 필요한 기능은 분석 창으로 보낸다.
 - 다른 프로그램(탐색기)에서 누른 마우스 버튼은 `Control.MouseButtons`로 보이지 않는다. `GetAsyncKeyState`를 쓴다(런처 끌어다 놓기).
 - 프로그램이 settings.json 을 저장하면 사용자가 단 주석은 사라진다(System.Text.Json 한계, 그대로 두기로 함).
-- 이 PC에서는 화면 자동 확인이 안 된다. UI 변경은 빌드와 로직 시험까지 하고, 화면은 사용자에게 확인을 부탁한다.
+- 창 크기·높이·여백 같은 픽셀 값은 `S(100% 기준값)`(`LogicalToDeviceUnits`)로 쓴다. 글꼴(pt)만 배율을 따라 커지면 125~200% 화면에서 글자가 잘린다.
+- UI 글꼴은 `Segoe UI`를 쓴다. 맑은 고딕은 경로의 `\`를 `₩`로 그린다. 한글은 글꼴 연결로 맑은 고딕이 자동으로 쓰인다.
+- 런처는 셸 아이콘(`ShellIconCache`)을 쓰므로 한 번 열고 나면 상주 메모리가 약 22MB가 된다(2026-10-28 측정, 40회 반복에도 GDI 개체 수 변화 없음). 런처에 기능을 더할 때는 25MB 여유를 먼저 본다.
+- 화면 모양은 `Graphics.CopyFromScreen`으로 창 영역을 찍어 확인할 수 있다(브라우저 자동화가 막힌 이 PC에서도 동작).
+- 흐린 글자색은 `Color.Gray`(대비 3.9:1) 대신 `(96,96,96)` 이상 진하게 쓴다(흰 배경에서 4.5:1 이상).
+- 브라우저 기반 화면 확인(Playwright)은 이 PC에서 안 된다. 위의 화면 복사로 대신하고, 마우스 조작이 필요한 동작은 사용자에게 확인을 부탁한다.
 
 ## 빌드
 ```powershell
