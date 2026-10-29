@@ -25,6 +25,9 @@ public sealed class AppSettings
 
     /// <summary>문구: 키는 @ 뒤에 칠 영문·숫자 단어, 값은 바꿔 넣을 내용({date}·{time}·줄바꿈 가능).</summary>
     public Dictionary<string, string> Snippets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>메모 폴더(.txt/.md 파일 모음, 환경 변수 가능). 없으면(null) 문서\DeskKeeper\메모.</summary>
+    public string? NotesFolder { get; set; }
 }
 
 public sealed class WatchedFolder

@@ -48,6 +48,7 @@ sealed class LauncherForm : Form
     private readonly Panel _field;
     private readonly TextBox _query;
     private readonly TileView _tiles;
+    private readonly NotesView _notes;
     private readonly Panel _footer;
     // Segoe UI: 맑은 고딕은 \ 를 ₩ 로 그린다. 한글은 글꼴 연결로 맑은 고딕이 자동으로 쓰인다
     private readonly Font _queryFont = new("Segoe UI", 13f);
@@ -61,6 +62,14 @@ sealed class LauncherForm : Form
     private TileView.Section? _menuSection;
     /// <summary>이름 입력 창을 띄운 동안은 비활성이 돼도 닫지 않는다.</summary>
     private bool _modalOpen;
+    /// <summary>Tab 으로 바꾸는 메모 화면을 보고 있는지(아니면 런처 타일).</summary>
+    private bool _notesMode;
+    /// <summary>메모 화면 높이(100% 기준). 작업 영역 80% 안에서.</summary>
+    private const int NotesHeight = 480;
+    /// <summary>검색 칸 오른쪽 "런처 · 메모" 글자의 누르는 영역(그릴 때 정한다). [0]=런처, [1]=메모.</summary>
+    private readonly Rectangle[] _modeRects = new Rectangle[2];
+    /// <summary>마우스가 올라간 화면 표시(-1 없음, 0 런처, 1 메모).</summary>
+    private int _modeHover = -1;
     /// <summary>검색 중(분류 구역 없이 맞는 순서)인지.</summary>
     private bool _searching;
     /// <summary>Windows 최근 항목(창을 열 때 한 번 읽는다). 등록하지 않은 임시 항목이라 메뉴가 다르다.</summary>
@@ -92,15 +101,38 @@ sealed class LauncherForm : Form
         _field.Controls.Add(_query);
         _field.Paint += OnPaintField;
         _field.Resize += (_, _) => LayoutQuery();
-        _field.Click += (_, _) => _query.Focus();
+        _field.MouseClick += (_, e) =>
+        {
+            int hit = ModeAt(e.Location);
+            if (hit >= 0 && (hit == 1) != _notesMode)
+                SetNotesMode(hit == 1);
+            else
+                _query.Focus();
+        };
+        _field.MouseMove += (_, e) => SetModeHover(ModeAt(e.Location));
+        _field.MouseLeave += (_, _) => SetModeHover(-1);
         _query.GotFocus += (_, _) => _field.Invalidate();
         _query.LostFocus += (_, _) => _field.Invalidate();
-        _query.TextChanged += (_, _) => RefreshTiles();
+        _query.TextChanged += (_, _) =>
+        {
+            if (_notesMode)
+                FilterNotes();
+            else
+                RefreshTiles();
+        };
 
         _tiles = new TileView(_icons) { Dock = DockStyle.Top, TabStop = false };
         _tiles.TileClicked += Launch;
         _tiles.FocusChanged += () => _footer?.Invalidate();
         _tiles.MouseUp += OnTilesMouseUp;
+
+        _notes = new NotesView { Dock = DockStyle.Top, Visible = false, TabStop = false };
+        _notes.OpenInNotepadRequested += OpenNote;
+        _notes.NewNoteRequested += NewNote;
+        _notes.SelectionChanged += () => _footer?.Invalidate();
+        _notes.EditingChanged += UpdateNotesStatus;
+        _notes.LeaveRequested += () => _query.Focus();
+        _notes.Message += ShowFooterMessage;
 
         _footer = new Panel { Dock = DockStyle.Top, Height = S(38), BackColor = Surface };
         _footer.Paint += OnPaintFooter;
@@ -111,12 +143,13 @@ sealed class LauncherForm : Form
         // Dock=Top 은 나중에 넣은 것이 위로 간다: 검색 칸 → 간격 → 타일 → 안내 줄
         var gapBelowField = new Panel { Dock = DockStyle.Top, Height = S(10), BackColor = Surface };
         Controls.Add(_footer);
+        Controls.Add(_notes);
         Controls.Add(_tiles);
         Controls.Add(gapBelowField);
         Controls.Add(_field);
 
         // 끌어다 놓기는 자식 컨트롤로 전달되지 않으므로 모두에 건다
-        foreach (Control c in new Control[] { this, _field, _query, _tiles, _footer, gapBelowField })
+        foreach (Control c in new Control[] { this, _field, _query, _tiles, _notes, _footer, gapBelowField })
         {
             c.AllowDrop = true;
             c.DragEnter += OnDragEnter;
@@ -146,7 +179,7 @@ sealed class LauncherForm : Form
         base.OnHandleCreated(e);
         WindowChrome.ApplyRoundedCorners(Handle, Border);
         // 입력 중에도 보이는 안내 문구(PlaceholderText 는 포커스를 받으면 사라진다)
-        WindowChrome.SetCueBanner(_query, "프로그램·폴더 이름으로 찾기");
+        UpdateCueBanner();
         LayoutQuery();
     }
 
@@ -157,9 +190,59 @@ sealed class LauncherForm : Form
         _query.Focus();
     }
 
+    /// <summary>Tab 은 대화상자 키라서 KeyDown 까지 오지 않는다. 여기서 화면 전환과 메모 단축키를 받는다.</summary>
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        switch (keyData)
+        {
+            // 편집 칸 안의 키는 NotesView 가 먼저 받아 여기까지 오지 않는다
+            case Keys.F2 when _notesMode:
+                _notes.BeginEdit();
+                return true;
+            case Keys.Tab or (Keys.Tab | Keys.Shift):
+                SetNotesMode(!_notesMode);
+                return true;
+            case Keys.Control | Keys.N when _notesMode:
+                NewNote();
+                return true;
+            // 검색 칸에서 글자를 고르지 않았으면 메모 내용을 복사한다
+            case Keys.Control | Keys.C when _notesMode && _query.Focused && _query.SelectionLength == 0:
+                CopyNote();
+                return true;
+            case Keys.PageUp or Keys.PageDown when _notesMode:
+                _notes.ScrollPreview(keyData == Keys.PageDown);
+                return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        // 편집 칸의 Enter·방향키는 그대로 글쓰기에 쓴다(KeyPreview 라 여기를 먼저 지난다)
+        if (_notesMode && _notes.EditorFocused)
+            return;
+        if (_notesMode)
+        {
+            switch (e.KeyCode)
+            {
+                case Keys.Escape:
+                    Close();
+                    break;
+                case Keys.Enter:
+                    _notes.BeginEdit();
+                    break;
+                case Keys.Up or Keys.Down:
+                    _notes.MoveSelection(e.KeyCode == Keys.Down ? 1 : -1);
+                    break;
+                default:
+                    // ←→ 는 검색 칸의 커서 이동으로 둔다
+                    return;
+            }
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
         switch (e.KeyCode)
         {
             case Keys.Escape:
@@ -251,6 +334,13 @@ sealed class LauncherForm : Form
     {
         int chrome = Padding.Top + _field.Height + S(10) + _footer.Height;
         int maxTiles = Math.Max(S(110), (int)(_workArea.Height * MaxScreenFraction) - chrome);
+        if (_notesMode)
+        {
+            _notes.Height = Math.Min(S(NotesHeight), maxTiles);
+            ClientSize = new Size(ClientSize.Width, chrome + _notes.Height);
+            KeepOnScreen();
+            return;
+        }
         int needed = _tiles.MeasureHeight(ClientSize.Width - Padding.Horizontal);
         int height = Math.Min(needed, maxTiles);
         _tiles.Visible = height > 0;
@@ -280,7 +370,7 @@ sealed class LauncherForm : Form
     private void LayoutQuery()
     {
         int left = S(46);
-        int right = S(90);
+        int right = S(210);
         int h = _query.PreferredHeight;
         _query.SetBounds(left, (_field.Height - h) / 2, Math.Max(10, _field.Width - left - right), h);
     }
@@ -308,8 +398,32 @@ sealed class LauncherForm : Form
             TextRenderer.DrawText(g, "", _iconFont, new Rectangle(S(14), 0, S(24), _field.Height), Muted,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
         }
-        TextRenderer.DrawText(g, _countText, _smallFont, new Rectangle(0, 0, _field.Width - S(16), _field.Height), Muted,
-            TextFormatFlags.VerticalCenter | TextFormatFlags.Right | TextFormatFlags.NoPadding);
+        // 오른쪽 끝: 화면 표시(런처 · 메모, 지금 것만 진하게). 그 왼쪽에 개수
+        const TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+        int x = _field.Width - S(16);
+        foreach (var (label, index) in new[] { ("메모", 1), ("런처", 0) })
+        {
+            bool active = (index == 1) == _notesMode;
+            using var font = active ? new Font(_smallFont, FontStyle.Bold) : null;
+            var f = font ?? _smallFont;
+            int w = TextRenderer.MeasureText(g, label, f, Size.Empty, flags).Width;
+            x -= w;
+            var labelRect = new Rectangle(x, 0, w, _field.Height);
+            // 누르는 영역은 글자보다 조금 넓게(작은 글자를 정확히 맞히지 않아도 되게)
+            _modeRects[index] = Rectangle.Inflate(labelRect, S(6), 0);
+            TextRenderer.DrawText(g, label, f, labelRect, active ? Accent : _modeHover == index ? Ink : Muted, flags);
+            if (active)
+            {
+                using var bar = new SolidBrush(Accent);
+                g.FillRectangle(bar, x, _field.Height / 2 + S(10), w, S(2));
+            }
+            x -= S(12);
+        }
+        x -= S(4);
+        TextRenderer.DrawText(g, "Tab", _smallFont, new Rectangle(0, 0, x, _field.Height), Muted, flags | TextFormatFlags.Right);
+        x -= TextRenderer.MeasureText(g, "Tab", _smallFont, Size.Empty, flags).Width + S(16);
+        TextRenderer.DrawText(g, _countText, _smallFont, new Rectangle(0, 0, Math.Max(0, x), _field.Height), Muted,
+            flags | TextFormatFlags.Right);
     }
 
     private void OnPaintFooter(object? sender, PaintEventArgs e)
@@ -321,10 +435,11 @@ sealed class LauncherForm : Form
         var left = TextRenderer.MeasureText(g, _footerText, _smallFont, Size.Empty, flags);
         TextRenderer.DrawText(g, _footerText, _smallFont, new Rectangle(S(2), 0, left.Width, _footer.Height), Muted, flags);
         // 오른쪽: 가리킨(또는 선택한) 타일의 경로. 타일에는 경로를 쓰지 않으므로 여기서 확인한다
-        if (_tiles.HotItem is { } item)
+        var hotPath = _notesMode ? _notes.SelectedNote?.Path : _tiles.HotItem?.Path;
+        if (hotPath is not null)
         {
             int x = S(2) + left.Width + S(24);
-            TextRenderer.DrawText(g, item.Path, _smallFont, new Rectangle(x, 0, Math.Max(0, _footer.Width - x), _footer.Height), Muted,
+            TextRenderer.DrawText(g, hotPath, _smallFont, new Rectangle(x, 0, Math.Max(0, _footer.Width - x), _footer.Height), Muted,
                 flags | TextFormatFlags.Right | TextFormatFlags.PathEllipsis);
         }
     }
@@ -403,7 +518,9 @@ sealed class LauncherForm : Form
 
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
-        e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Link : DragDropEffects.None;
+        // 메모 화면에서는 메모 폴더로 옮긴다
+        e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) != true ? DragDropEffects.None
+            : _notesMode ? DragDropEffects.Move : DragDropEffects.Link;
     }
 
     private void OnDragDrop(object? sender, DragEventArgs e)
@@ -411,6 +528,11 @@ sealed class LauncherForm : Form
         if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths)
             return;
         _droppedWhileInactive = true;
+        if (_notesMode)
+        {
+            DropNotes(paths);
+            return;
+        }
         try
         {
             // 분류별 보기에서 어느 구역 위에 놓았는지로 분류를 정한다(빈 곳·검색 중이면 분류 없음)
@@ -426,6 +548,171 @@ sealed class LauncherForm : Form
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             ShowFooterMessage(ex.Message);
+        }
+    }
+
+    // ── 메모 화면 ───────────────────────────────────────────
+
+    /// <summary>런처 ↔ 메모. 검색어는 그대로 두고 바뀐 화면에서 다시 찾는다. 메모는 바꿀 때마다 폴더를 다시 읽는다.</summary>
+    private void SetNotesMode(bool on)
+    {
+        _notesMode = on;
+        _tiles.Visible = !on && _tiles.Height > 0;
+        _notes.Visible = on;
+        UpdateCueBanner();
+        if (on)
+            ReloadNotes();
+        else
+            RefreshTiles();
+        // 창 높이가 바뀌면서 새로 드러난 패널이 그려지지 않는 경우가 있어 전체를 다시 그린다
+        Invalidate(true);
+        _query.Focus();
+        _query.SelectAll();
+    }
+
+    /// <summary>검색 칸 위 점이 "런처"(0)·"메모"(1) 글자 위인지. 아니면 -1.</summary>
+    private int ModeAt(Point p) => _modeRects[0].Contains(p) ? 0 : _modeRects[1].Contains(p) ? 1 : -1;
+
+    private void SetModeHover(int hover)
+    {
+        if (hover == _modeHover)
+            return;
+        _modeHover = hover;
+        _field.Cursor = hover >= 0 ? Cursors.Hand : Cursors.Default;
+        _field.Invalidate();
+    }
+
+    private void UpdateCueBanner() =>
+        WindowChrome.SetCueBanner(_query, _notesMode ? "메모 제목·내용으로 찾기" : "프로그램·폴더 이름으로 찾기");
+
+    /// <summary>메모 폴더 경로. settings.json 의 notesFolder 가 잘못된 경로면 null 과 안내.</summary>
+    private string? NotesFolder()
+    {
+        _store.ReloadIfChanged();
+        try
+        {
+            return Notes.FolderOf(_store.Current);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            ShowFooterMessage($"settings.json 의 notesFolder 경로가 잘못됐습니다: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void ReloadNotes(string? keepPath = null)
+    {
+        if (NotesFolder() is not { } folder)
+            return;
+        try
+        {
+            _notes.Reload(folder, keepPath);
+            _notes.Filter(_query.Text, keepPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowFooterMessage($"메모 폴더를 읽지 못했습니다: {ex.Message}");
+            return;
+        }
+        UpdateNotesStatus();
+        FitHeight();
+    }
+
+    private void FilterNotes()
+    {
+        _notes.Filter(_query.Text);
+        UpdateNotesStatus();
+    }
+
+    private void UpdateNotesStatus()
+    {
+        bool searching = _query.Text.Trim().Length > 0;
+        _countText = searching ? $"{_notes.VisibleCount}/{_notes.TotalCount}" : _notes.TotalCount > 0 ? $"{_notes.TotalCount}개" : "";
+        _footerText = _notes.IsEditing
+            ? "편집 중 · 자동 저장 · Esc 보기로 · Ctrl+B 굵게 · Ctrl+1/2 제목 · Ctrl+L 목록 · Ctrl+T 할 일 · Tab 들여쓰기"
+            : _notes.TotalCount == 0
+            ? "메모가 없습니다. Ctrl+N 으로 만들거나 바탕화면의 .txt·.md 를 끌어다 놓으면 이 폴더로 옮깁니다."
+            : searching && _notes.VisibleCount == 0
+                ? $"'{_query.Text.Trim()}'이(가) 든 메모가 없습니다."
+                : "↑↓ 선택 · Enter·F2 편집 · Ctrl+N 새 메모 · Ctrl+C 내용 복사 · PgUp/PgDn 넘기기";
+        _field.Invalidate();
+        _footer.Invalidate();
+    }
+
+    private void OpenNote(NoteFile note)
+    {
+        Close();
+        OpenInNotepad(note.Path);
+    }
+
+    /// <summary>메모장으로 연다(.md 연결 프로그램이 무거운 편집기일 수 있어 고정).</summary>
+    private static void OpenInNotepad(string path)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true })?.Dispose();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            MessageBox.Show($"메모장을 열지 못했습니다.\n{path}\n\n{ex.Message}", "DeskKeeper", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    /// <summary>제목을 물어 빈 메모(.md)를 만들고 그 자리에서 편집을 시작한다. 검색어가 있으면 제목 기본값으로 쓴다.</summary>
+    private void NewNote()
+    {
+        if (NotesFolder() is not { } folder)
+            return;
+        var title = AskName("새 메모", "제목 (파일 이름이 됩니다)", _query.Text.Trim());
+        if (title is null)
+            return;
+        try
+        {
+            var path = Notes.Create(folder, title);
+            // 새 메모가 검색에 걸러지지 않게 검색어를 비우고, 만든 메모를 골라 바로 편집한다
+            _query.Clear();
+            ReloadNotes(path);
+            _notes.BeginEdit();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowFooterMessage($"메모를 만들지 못했습니다: {ex.Message}");
+        }
+    }
+
+    private void CopyNote()
+    {
+        if (_notes.SelectedText is not { Length: > 0 } text)
+            return;
+        try
+        {
+            Clipboard.SetText(text.ReplaceLineEndings("\r\n"));
+            ShowFooterMessage($"'{_notes.SelectedNote?.Title}' 내용을 복사했습니다.");
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            ShowFooterMessage("클립보드를 다른 프로그램이 쓰고 있습니다. 다시 눌러 보세요.");
+        }
+    }
+
+    /// <summary>끌어다 놓은 .txt/.md 를 메모 폴더로 옮긴다. 나머지 파일은 건너뛴다.</summary>
+    private void DropNotes(string[] paths)
+    {
+        if (NotesFolder() is not { } folder)
+            return;
+        try
+        {
+            int moved = Notes.MoveIn(folder, paths);
+            int skipped = paths.Length - moved;
+            ReloadNotes();
+            ShowFooterMessage(moved == 0
+                ? "옮긴 메모가 없습니다. .txt·.md 파일만 받으며, 이미 메모 폴더에 있는 것은 그대로 둡니다."
+                : skipped > 0 ? $"{moved}개를 메모 폴더로 옮겼습니다({skipped}개는 건너뜀)." : $"{moved}개를 메모 폴더로 옮겼습니다.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ReloadNotes();
+            ShowFooterMessage($"옮기지 못했습니다: {ex.Message}");
         }
     }
 
@@ -626,6 +913,13 @@ sealed class LauncherForm : Form
 
     /// <summary>100% 기준 픽셀 값을 현재 화면 배율에 맞춘다.</summary>
     private int S(int logicalPixels) => LogicalToDeviceUnits(logicalPixels);
+
+    /// <summary>다른 곳을 눌러 닫혀도 편집하던 메모는 저장한다.</summary>
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        _notes.SaveOnClose();
+        base.OnFormClosing(e);
+    }
 
     protected override void Dispose(bool disposing)
     {

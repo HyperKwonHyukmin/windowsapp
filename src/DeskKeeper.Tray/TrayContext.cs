@@ -287,6 +287,7 @@ sealed class TrayContext : ApplicationContext
             try { _store.EnsureSnippetsWritten(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             OpenSettingsFile();
         });
+        _menu.Items.Add("메모 폴더 열기", null, (_, _) => OpenNotesFolder());
         _menu.Items.Add("설정 파일 열기", null, (_, _) => OpenSettingsFile());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Windows 시작 시 실행", null, OnToggleAutoStart) { Checked = AutoStart.IsEnabled() });
@@ -294,6 +295,23 @@ sealed class TrayContext : ApplicationContext
 
         // 처음에 항목이 비어 있으면 WinForms 가 열기를 취소해 두므로 되돌린다
         e.Cancel = false;
+    }
+
+    /// <summary>메모 폴더를 탐색기로 연다(없으면 만든다). 메모 정리·이름 바꾸기는 탐색기에서 한다.</summary>
+    private void OpenNotesFolder()
+    {
+        _store.ReloadIfChanged();
+        try
+        {
+            var folder = Notes.FolderOf(_store.Current);
+            Directory.CreateDirectory(folder);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException
+            or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show($"메모 폴더를 열지 못했습니다.\n\n{ex.Message}", "DeskKeeper", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void OpenSettingsFile()
