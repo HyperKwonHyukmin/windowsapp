@@ -34,8 +34,8 @@
 
 ## 빌드
 ```powershell
-pwsh ./build.ps1          # 두 exe 를 %LOCALAPPDATA%\Programs\DeskKeeper 에 설치하고 상주 프로그램 재시작
-pwsh ./build.ps1 -NoStart # 설치만
+powershell -ExecutionPolicy Bypass -File .\build.ps1          # 두 exe 를 %LOCALAPPDATA%\Programs\DeskKeeper 에 설치하고 상주 프로그램 재시작
+powershell -ExecutionPolicy Bypass -File .\build.ps1 -NoStart # 설치만
 dotnet build DeskKeeper.sln -c Release   # 컴파일 확인만
 ```
 - `build.ps1`은 실행 중인 DeskKeeper 를 먼저 끄고(exe 잠김 방지), 자동 시작이 켜져 있으면 Run 값을 설치 경로로 고친다.

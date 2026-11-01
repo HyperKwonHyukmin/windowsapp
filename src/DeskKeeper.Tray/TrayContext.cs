@@ -145,7 +145,7 @@ sealed class TrayContext : ApplicationContext
             _memoryHigh = true;
             _balloonAction = OpenSessionBoard;
             _icon.ShowBalloonTip(8000, $"메모리 {m.Percent}% 사용 중",
-                $"{m.UsedGb:0.0} / {m.TotalGb:0.0} GB. 눌러서 SessionBoard 메모리 탭(4)에서 무엇이 쓰는지 확인하세요.", ToolTipIcon.Warning);
+                $"{m.UsedGb:0.0} / {m.TotalGb:0.0} GB. 눌러서 SessionBoard 메모리 탭에서 무엇이 쓰는지 확인하세요.", ToolTipIcon.Warning);
         }
         else if (_memoryHigh && m.Percent < 85)
         {
@@ -165,7 +165,7 @@ sealed class TrayContext : ApplicationContext
         _icon.Text = string.Join(" · ", parts);
     }
 
-    /// <summary>SessionBoard 화면을 연다. 메모리 탭으로 바로 가는 주소가 없어 4 키를 안내한다.</summary>
+    /// <summary>SessionBoard 메모리 탭을 연다.</summary>
     private void OpenSessionBoard()
     {
         if (!SystemMemory.IsSessionBoardRunning())
@@ -279,7 +279,7 @@ sealed class TrayContext : ApplicationContext
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("런처 열기", null, (_, _) => ToggleLauncher()) { ShortcutKeyDisplayString = HotkeyText });
         _menu.Items.Add("폴더 분석…", null, (_, _) => ItemLauncher.StartAnalyzer(null));
-        var memoryLabel = _memoryPercent >= 0 ? $"메모리 보기 ({_memoryPercent}%) — SessionBoard 4번 탭" : "메모리 보기 — SessionBoard 4번 탭";
+        var memoryLabel = _memoryPercent >= 0 ? $"메모리 보기 ({_memoryPercent}%) — SessionBoard" : "메모리 보기 — SessionBoard";
         _menu.Items.Add(memoryLabel, null, (_, _) => OpenSessionBoard());
         _menu.Items.Add(new ToolStripMenuItem("문구 입력 (@단어)", null, (_, _) => ToggleSnippets()) { Checked = _snippets.IsRunning });
         _menu.Items.Add("문구 편집", null, (_, _) =>

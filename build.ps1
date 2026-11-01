@@ -1,6 +1,6 @@
 ﻿# DeskKeeper 빌드·설치: 두 프로그램을 설치 폴더에 publish 하고 상주 프로그램을 다시 띄운다.
-# 사용법: pwsh ./build.ps1            (기본 설치 폴더 %LOCALAPPDATA%\Programs\DeskKeeper)
-#         pwsh ./build.ps1 -NoStart   (빌드만, 실행 안 함)
+# 사용법: powershell -ExecutionPolicy Bypass -File .\build.ps1            (기본 설치 폴더 %LOCALAPPDATA%\Programs\DeskKeeper)
+#         powershell -ExecutionPolicy Bypass -File .\build.ps1 -NoStart   (빌드만, 실행 안 함)
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\DeskKeeper'),
     [switch]$NoStart

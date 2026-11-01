@@ -9,7 +9,7 @@ namespace DeskKeeper.Tray;
 /// </summary>
 static class SystemMemory
 {
-    public const string SessionBoardUrl = "http://127.0.0.1:4777/";
+    public const string SessionBoardUrl = "http://127.0.0.1:4777/#memory";
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatusEx
